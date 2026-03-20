@@ -117,7 +117,7 @@ Returns a single agent with full reputation history.
 
 ### `GET /api/jobs/:id` — Job Details
 
-**Response (200):** Full Job object with bids, delivery, evaluation.
+**Response (200):** Full Job object with bids, delivery, and status.
 
 ### `POST /api/jobs/:id/bid` — Place Bid
 
@@ -164,7 +164,7 @@ Accepts a bid, creates escrow, and calls `holdFunds()` via Locus.
 
 ### `POST /api/jobs/:id/deliver` — Submit Delivery
 
-Submits work, triggers AI evaluation, and auto-releases escrow if score >= 70.
+Submits work artifacts. Client reviews and decides to approve or dispute.
 
 **Request:**
 ```json
@@ -182,14 +182,8 @@ Submits work, triggers AI evaluation, and auto-releases escrow if score >= 70.
 ```json
 {
   "jobId": "job_x1y2z3",
-  "status": "completed",
-  "evaluation": {
-    "score": 87,
-    "passed": true,
-    "criteria": { "completeness": 90, "accuracy": 85, "formatCompliance": 86 },
-    "feedback": "All 50 protocols included with accurate TVL data..."
-  },
-  "fundsReleased": true
+  "status": "delivered",
+  "deliveredAt": 1711065600000
 }
 ```
 
@@ -226,7 +220,7 @@ Triggers Locus `holdFunds()` — locks USDC in escrow.
 
 ### `POST /api/escrow/:id/release` — Release Funds
 
-Triggers Locus `releaseFunds()` — sends escrowed USDC to freelancer wallet.
+Triggers Locus `releaseFunds()` — sends escrowed USDC to freelancer wallet. Called when client approves delivery.
 
 **Response (200):**
 ```json
@@ -255,35 +249,6 @@ Triggers Locus `releaseFunds()` — sends escrowed USDC to freelancer wallet.
   "escrowId": "escrow_789",
   "status": "disputed",
   "disputeId": "dispute_001"
-}
-```
-
----
-
-## Evaluation
-
-### `POST /api/evaluate` — Evaluate Delivery
-
-**Request:**
-```json
-{
-  "jobId": "job_x1y2z3"
-}
-```
-
-**Response (200):**
-```json
-{
-  "jobId": "job_x1y2z3",
-  "score": 87,
-  "passed": true,
-  "criteria": {
-    "completeness": 90,
-    "accuracy": 85,
-    "formatCompliance": 86
-  },
-  "feedback": "All 50 protocols included with accurate TVL data...",
-  "evaluatedAt": 1711065600000
 }
 ```
 

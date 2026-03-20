@@ -18,15 +18,9 @@
               │     │delivered │  │ refunded  │
               │     └────┬─────┘  └──────────┘
               │          │
-              │          │ evaluate()
-              │          ▼
-              │     ┌──────────┐
-              │     │evaluated │
-              │     └────┬─────┘
-              │          │
               │    ┌─────┴─────┐
               │    │           │
-              │ pass?       fail?
+              │ approve?    dispute?
               │    │           │
               │    ▼           ▼
               │ ┌────────┐ ┌──────────┐
@@ -51,10 +45,10 @@
 | `created` | `funded` | Client funds escrow | `holdFunds(amount, memo)` locks USDC |
 | `funded` | `delivered` | Freelancer submits work | Artifacts stored |
 | `funded` | `refunded` | Deadline expires or client cancels | USDC returned to client |
-| `delivered` | `released` | Score >= threshold (70) | `releaseFunds(wallet, amount, memo)` pays freelancer |
-| `delivered` | `disputed` | Score < threshold or party disputes | Dispute opened |
-| `disputed` | `released` | Re-evaluation favors freelancer | `releaseFunds()` pays freelancer |
-| `disputed` | `refunded` | Re-evaluation favors client | USDC returned to client |
+| `delivered` | `released` | Client approves delivery | `releaseFunds(wallet, amount, memo)` pays freelancer |
+| `delivered` | `disputed` | Client disputes delivery | Dispute opened |
+| `disputed` | `released` | Dispute resolved in freelancer's favor | `releaseFunds()` pays freelancer |
+| `disputed` | `refunded` | Dispute resolved in client's favor | USDC returned to client |
 
 ## Locus Integration
 
@@ -114,35 +108,34 @@ Escrow eliminates both by holding funds in a neutral third party (Locus) until w
 
 ```
 Layer 1: Financial Trust  → Locus holdFunds/releaseFunds on Base
-Layer 2: Quality Trust    → AI evaluator scores deliveries objectively
+Layer 2: Quality Trust    → Client manually verifies delivery
 Layer 3: Identity Trust   → Agent reputation log (jobs, scores, earnings)
-Layer 4: Dispute Trust    → Re-evaluation with additional context
+Layer 4: Dispute Trust    → Dispute resolution with evidence
 ```
 
-### AI Evaluator as Arbiter
+### Manual Verification
 
-The AI evaluator is the key trust mechanism. It:
-1. Receives the **exact job description** and requirements
-2. Receives the **exact delivery** artifacts
-3. Scores on **structured criteria** (completeness, accuracy, format)
-4. Makes a **deterministic pass/fail decision** based on threshold (70)
-5. Provides **written feedback** explaining the score
+The client is the arbiter of delivery quality:
+1. Freelancer submits delivery with artifacts and notes
+2. Client reviews the delivery
+3. Client approves → funds release automatically
+4. Client disputes → dispute process opens with evidence
 
-This removes subjective disputes — the evaluation criteria are known upfront.
+This keeps quality assessment in the hands of the party who defined the requirements.
 
 ## Dispute Resolution Protocol
 
 1. **Filing**: Either party calls `POST /api/escrow/:id/dispute` with reason and evidence
-2. **Re-evaluation**: AI evaluator re-scores with dispute context included
+2. **Review**: Dispute is reviewed with the submitted context
 3. **Resolution outcomes**:
-   - **Full release**: Work meets requirements despite initial low score → freelancer gets 100%
-   - **Full refund**: Work clearly doesn't meet requirements → client gets 100%
-   - **Partial split**: Work partially meets requirements → percentage split based on completeness score
+   - **Full release**: Work meets requirements → freelancer gets 100%
+   - **Full refund**: Work doesn't meet requirements → client gets 100%
+   - **Partial split**: Work partially meets requirements → percentage split
 4. **Finality**: Resolution is final — no further disputes allowed
 
 ## Timeout Handling
 
 - Jobs have a `deadline` field
 - If no delivery by deadline: escrow auto-refunds to client
-- If delivered but not evaluated within 24h: auto-approve (benefit of doubt to freelancer)
+- If delivered but not reviewed within 24h: auto-approve (benefit of doubt to freelancer)
 - If disputed but not resolved within 48h: auto-split 50/50

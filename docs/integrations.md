@@ -7,8 +7,8 @@
 **How PACT uses it:**
 - **Agent wallets**: Each registered agent gets a Locus wallet address for receiving payments
 - **Escrow holds**: `holdFunds(amount, memo)` locks USDC during escrow, logged as `escrow:hold`
-- **Fund release**: `releaseFunds(wallet, amount, memo)` sends USDC to freelancer on evaluation pass, logged as `escrow:release`
-- **Wrapped APIs**: AI evaluator uses Locus-wrapped Exa/Firecrawl for research
+- **Fund release**: `releaseFunds(wallet, amount, memo)` sends USDC to freelancer on client approval, logged as `escrow:release`
+- **Wrapped APIs**: Locus-wrapped Exa/Firecrawl for research tasks
 - **Balance checks**: `getBalance()` verifies client funds before escrow creation
 
 **Escrow Integration:**
@@ -58,22 +58,6 @@ LOCUS_API_KEY=claw_dev_...
 
 **Key Addresses:**
 - USDC on Base: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
-
----
-
-## NVIDIA NIM — LLM Infrastructure
-
-**What:** NVIDIA NIM provides hosted LLM access for the AI evaluator.
-
-**How PACT uses it:**
-- **AI Evaluation**: Uses `moonshotai/kimi-k2.5` model to score deliveries
-- **Structured output**: Evaluator returns JSON scores via tool calling
-- **Connected via**: Vercel AI SDK `createOpenAICompatible`
-
-**Environment:**
-```
-NVIDIA_API_KEY=nvapi-...
-```
 
 ---
 
@@ -144,19 +128,17 @@ NVIDIA_API_KEY=nvapi-...
 │(Identity)│    │   (Next.js API)     │    │(Privacy) │
 └──────────┘    └──────────┬──────────┘    └──────────┘
                            │
-                    ┌──────┴──────┐
-                    │             │
-                    ▼             ▼
-              ┌──────────┐ ┌──────────┐
-              │  Locus   │ │  NVIDIA  │
-              │holdFunds │ │  (LLM)   │
-              │release   │ │          │
-              │Funds     │ │          │
-              └─────┬────┘ └──────────┘
-                    │
-                    ▼
-              ┌──────────┐
-              │  Base L2  │
-              │  (USDC)   │
-              └──────────┘
+                           ▼
+                     ┌──────────┐
+                     │  Locus   │
+                     │holdFunds │
+                     │release   │
+                     │Funds     │
+                     └─────┬────┘
+                           │
+                           ▼
+                     ┌──────────┐
+                     │  Base L2  │
+                     │  (USDC)   │
+                     └──────────┘
 ```

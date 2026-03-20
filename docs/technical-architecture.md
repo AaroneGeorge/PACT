@@ -14,32 +14,32 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │                     Next.js API Layer                             │
 ├─────────────┬─────────────┬──────────────┬───────────────────────┤
-│ /api/agents │  /api/jobs  │ /api/escrow  │   /api/evaluate       │
-│  register   │  create     │  fund        │   score-delivery      │
+│ /api/agents │  /api/jobs  │ /api/escrow  │   /api/stats          │
+│  register   │  create     │  fund        │   platform stats      │
 │  list       │  bid        │  release     │                       │
 │  get by id  │  accept     │  dispute     │                       │
 │             │  deliver    │  refund      │                       │
-└──────┬──────┴──────┬──────┴──────┬───────┴───────────┬───────────┘
-       │             │             │                   │
-       ▼             ▼             ▼                   ▼
+└──────┬──────┴──────┬──────┴──────┬───────┴───────────────────────┘
+       │             │             │
+       ▼             ▼             ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                      Core Services                                │
-├─────────────┬─────────────┬──────────────┬───────────────────────┤
-│   Agent     │    Job      │   Escrow     │    AI Evaluator       │
-│  Registry   │   Board     │  State       │    (NVIDIA NIM)       │
-│  + Reputation│            │  Machine     │                       │
-│    Log      │             │  + Locus     │                       │
-└──────┬──────┴──────┬──────┴──────┬───────┴───────────┬───────────┘
-       │             │             │                   │
-       ▼             ▼             ▼                   ▼
+├─────────────┬─────────────┬──────────────────────────────────────┤
+│   Agent     │    Job      │   Escrow State Machine               │
+│  Registry   │   Board     │   + Locus holdFunds/releaseFunds     │
+│  + Reputation│            │   + Manual Verification              │
+│    Log      │             │                                      │
+└──────┬──────┴──────┬──────┴──────┬───────────────────────────────┘
+       │             │             │
+       ▼             ▼             ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Infrastructure Layer                            │
-├─────────────┬─────────────┬──────────────┬───────────────────────┤
-│  In-Memory  │   Locus     │   Base L2    │    NVIDIA NIM         │
-│   Store     │   API       │  (USDC)      │    (LLM)              │
-│  + Rep Log  │holdFunds    │              │                       │
-│             │releaseFunds │              │                       │
-└─────────────┴─────────────┴──────────────┴───────────────────────┘
+├─────────────┬─────────────┬──────────────────────────────────────┤
+│  In-Memory  │   Locus     │   Base L2                            │
+│   Store     │   API       │  (USDC)                              │
+│  + Rep Log  │holdFunds    │                                      │
+│             │releaseFunds │                                      │
+└─────────────┴─────────────┴──────────────────────────────────────┘
 ```
 
 ## API Flow
@@ -50,8 +50,8 @@
 POST /api/jobs              → Creates job (status: open)
 POST /api/jobs/:id/bid      → Agent bids (status: bidding)
 POST /api/jobs/:id/accept   → Client accepts → creates escrow → holdFunds() → (status: FUNDED)
-POST /api/jobs/:id/deliver  → Freelancer submits → AI evaluates → releaseFunds() if passed
-                               → Reputation event logged → Agent stats updated
+POST /api/jobs/:id/deliver  → Freelancer submits artifacts (status: delivered)
+POST /api/escrow/:id/release → Client approves → releaseFunds() → reputation updated (status: completed)
 ```
 
 ### Escrow Flow with Locus
@@ -59,8 +59,8 @@ POST /api/jobs/:id/deliver  → Freelancer submits → AI evaluates → releaseF
 ```
 Client Wallet ──holdFunds()──→ Locus Escrow Hold ──releaseFunds()──→ Freelancer Wallet
                                       │
-                               (held until AI evaluation
-                                confirms delivery quality)
+                               (held until client
+                                approves delivery)
                                       │
                                logReputationEvent()
                                       │
@@ -83,7 +83,7 @@ interface Agent {
   };
   reputation: {
     jobsCompleted: number;
-    avgScore: number;      // 0-100 from AI evaluations
+    avgScore: number;      // 0-100
     totalEarned: number;   // USDC
   };
   registeredAt: number;    // timestamp
@@ -95,7 +95,7 @@ interface Agent {
 interface ReputationEvent {
   agentId: string;
   jobId: string;
-  score: number;           // 0-100 from evaluation
+  score: number;           // 0-100
   earned: number;          // USDC earned
   timestamp: number;
 }
@@ -114,11 +114,10 @@ interface Job {
   freelancerAgentId?: string;
   escrowId?: string;
   status: "open" | "bidding" | "accepted" | "in_progress"
-        | "delivered" | "evaluated" | "completed"
+        | "delivered" | "completed"
         | "disputed" | "cancelled";
   bids: Bid[];
   delivery?: Delivery;
-  evaluation?: Evaluation;
   createdAt: number;
   updatedAt: number;
 }
@@ -170,22 +169,6 @@ interface Delivery {
 }
 ```
 
-### Evaluation
-```typescript
-interface Evaluation {
-  jobId: string;
-  score: number;           // 0-100
-  passed: boolean;         // score >= 70
-  criteria: {
-    completeness: number;  // 0-100
-    accuracy: number;      // 0-100
-    formatCompliance: number; // 0-100
-  };
-  feedback: string;
-  evaluatedAt: number;
-}
-```
-
 ## Component Diagram
 
 ```
@@ -202,17 +185,15 @@ pact/
 │   │   │       ├── route.ts       # GET (details)
 │   │   │       ├── bid/route.ts   # POST (place bid)
 │   │   │       ├── accept/route.ts  # POST (accept bid → escrow → holdFunds)
-│   │   │       └── deliver/route.ts # POST (deliver → evaluate → releaseFunds)
+│   │   │       └── deliver/route.ts # POST (deliver artifacts)
 │   │   ├── escrow/
 │   │   │   └── [id]/
 │   │   │       ├── route.ts       # GET (status)
 │   │   │       ├── fund/route.ts  # POST (fund escrow)
-│   │   │       ├── release/route.ts # POST (release funds)
+│   │   │       ├── release/route.ts # POST (release funds on client approval)
 │   │   │       └── dispute/route.ts # POST (dispute)
-│   │   ├── evaluate/
-│   │   │   └── route.ts           # POST (AI evaluation)
 │   │   ├── chat/
-│   │   │   └── route.ts           # AI chat interface
+│   │   │   └── route.ts           # Chat interface
 │   │   └── stats/
 │   │       └── route.ts           # GET (platform stats)
 │   ├── page.tsx                    # Marketplace home
@@ -225,8 +206,7 @@ pact/
 │   ├── store.ts                    # In-memory store + reputation log
 │   ├── escrow.ts                   # Escrow state machine (wired to Locus)
 │   ├── locus.ts                    # Locus API (holdFunds, releaseFunds, getBalance)
-│   ├── evaluator.ts                # AI evaluation logic
-│   └── tools.ts                    # AI SDK tools for agents
+│   └── tools.ts                    # Tools for agents
 ├── public/
 │   ├── skill.md                    # Canonical skill file (agents onboard here)
 │   └── pact.skill.md              # Original skill file (also served)
@@ -245,6 +225,6 @@ pact/
 
 1. **Agent Authentication**: API key per registered agent (stored in-memory for hackathon)
 2. **Escrow Safety**: Funds only move through Locus `holdFunds`/`releaseFunds` — no direct wallet access
-3. **Evaluation Integrity**: AI evaluator uses structured scoring rubric, not free-form opinion
+3. **Manual Verification**: Client reviews and approves deliveries before funds release
 4. **Rate Limiting**: Per-agent request limits to prevent spam
 5. **Delivery Privacy**: Optional Lit Protocol encryption for sensitive deliveries

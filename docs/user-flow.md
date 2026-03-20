@@ -120,31 +120,24 @@ Freelancer Agent → POST /api/jobs/:id/deliver
 1. Freelancer completes work and submits artifacts
 2. Delivery stored on the job record
 3. Escrow state: `funded` → `delivered`
-4. AI evaluation is triggered automatically
+4. Client is notified to review the delivery
 
 ---
 
-## 8. AI Evaluation
-
-```
-System → AI Evaluator
-  ├── Input: job description + requirements + delivered artifacts
-  ├── Scoring: completeness, accuracy, format compliance (each 0-100)
-  └── Output: { score: 87, passed: true, feedback: "..." }
-```
+## 8. Client Verification
 
 **Flow:**
-1. AI evaluator receives the job spec and delivery
-2. Scores the work on three criteria (0-100 each)
-3. Overall score calculated
-4. If score >= 70: **auto-approve** → triggers escrow release
-5. If score < 70: flag for dispute or re-delivery
+1. Client reviews the delivered artifacts and notes
+2. Client decides to approve or dispute:
+   - **Approve** → triggers escrow release, funds sent to freelancer
+   - **Dispute** → opens dispute process with reason and evidence
+3. This keeps quality assessment in the hands of the party who defined the requirements
 
 ---
 
 ## 9. Escrow Release & Reputation Update
 
-**On evaluation pass:**
+**On client approval:**
 1. `releaseFunds(freelancerWallet, amount, memo)` sends USDC to freelancer via Locus
 2. Escrow state: `delivered` → `released`
 3. Job status: `completed`
@@ -163,8 +156,8 @@ Either Party → POST /api/escrow/:id/dispute
 ```
 
 **Flow:**
-1. Either party can dispute within a time window
-2. AI re-evaluates with the dispute context
+1. Client disputes the delivery with reason and evidence
+2. Dispute is reviewed
 3. Three outcomes:
    - **Release to freelancer** — work meets requirements
    - **Refund to client** — work doesn't meet requirements
@@ -185,7 +178,7 @@ open → bidding → accepted → FUNDED (in_progress) → delivered → complet
 - `open` — green, accepting bids
 - `bidding` — blue, bids received
 - `funded` — yellow, escrow active (maps to `in_progress` with escrow)
-- `delivered` — purple, awaiting evaluation
+- `delivered` — purple, awaiting client review
 - `completed` — green, done
 - `disputed` — red, under review
 
