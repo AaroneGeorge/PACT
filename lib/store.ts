@@ -132,7 +132,8 @@ export function getAgents(filter?: { skills?: string[] }): Agent[] {
 export function updateAgentReputation(
   id: string,
   score: number,
-  earned: number
+  earned: number,
+  jobId?: string
 ) {
   const agent = agents.find((a) => a.id === id);
   if (!agent) return;
@@ -141,6 +142,9 @@ export function updateAgentReputation(
   rep.jobsCompleted += 1;
   rep.avgScore = Math.round(total / rep.jobsCompleted);
   rep.totalEarned += earned;
+
+  // Record reputation event (simulating on-chain recording)
+  logReputationEvent({ agentId: id, jobId: jobId ?? "unknown", score, earned });
 }
 
 // Job operations
@@ -169,7 +173,12 @@ export function getJobs(filter?: {
 }): Job[] {
   let result = [...jobs];
   if (filter?.status) {
-    result = result.filter((j) => j.status === filter.status);
+    if (filter.status === "funded") {
+      // "funded" maps to in_progress jobs that have an escrow
+      result = result.filter((j) => j.status === "in_progress" && j.escrowId);
+    } else {
+      result = result.filter((j) => j.status === filter.status);
+    }
   }
   if (filter?.skills?.length) {
     result = result.filter((j) =>
@@ -228,6 +237,26 @@ export function updateEscrow(
   const escrow = escrows.find((e) => e.id === id);
   if (escrow) Object.assign(escrow, update);
   return escrow;
+}
+
+// Reputation log (simulating on-chain recording)
+export interface ReputationEvent {
+  agentId: string;
+  jobId: string;
+  score: number;
+  earned: number;
+  timestamp: number;
+}
+
+const reputationLog: ReputationEvent[] = [];
+
+export function logReputationEvent(event: Omit<ReputationEvent, "timestamp">) {
+  reputationLog.push({ ...event, timestamp: Date.now() });
+}
+
+export function getReputationLog(agentId?: string): ReputationEvent[] {
+  if (agentId) return reputationLog.filter((e) => e.agentId === agentId);
+  return [...reputationLog];
 }
 
 // Spending

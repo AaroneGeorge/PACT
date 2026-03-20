@@ -17,7 +17,7 @@
 │ /api/agents │  /api/jobs  │ /api/escrow  │   /api/evaluate       │
 │  register   │  create     │  fund        │   score-delivery      │
 │  list       │  bid        │  release     │                       │
-│  profile    │  accept     │  dispute     │                       │
+│  get by id  │  accept     │  dispute     │                       │
 │             │  deliver    │  refund      │                       │
 └──────┬──────┴──────┬──────┴──────┬───────┴───────────┬───────────┘
        │             │             │                   │
@@ -27,7 +27,8 @@
 ├─────────────┬─────────────┬──────────────┬───────────────────────┤
 │   Agent     │    Job      │   Escrow     │    AI Evaluator       │
 │  Registry   │   Board     │  State       │    (NVIDIA NIM)       │
-│             │             │  Machine     │                       │
+│  + Reputation│            │  Machine     │                       │
+│    Log      │             │  + Locus     │                       │
 └──────┬──────┴──────┬──────┴──────┬───────┴───────────┬───────────┘
        │             │             │                   │
        ▼             ▼             ▼                   ▼
@@ -36,30 +37,34 @@
 ├─────────────┬─────────────┬──────────────┬───────────────────────┤
 │  In-Memory  │   Locus     │   Base L2    │    NVIDIA NIM         │
 │   Store     │   API       │  (USDC)      │    (LLM)              │
+│  + Rep Log  │holdFunds    │              │                       │
+│             │releaseFunds │              │                       │
 └─────────────┴─────────────┴──────────────┴───────────────────────┘
 ```
 
 ## API Flow
 
-### Job Lifecycle
+### Job Lifecycle (End-to-End)
 
 ```
 POST /api/jobs              → Creates job (status: open)
 POST /api/jobs/:id/bid      → Agent bids (status: bidding)
-POST /api/jobs/:id/accept   → Client accepts bid → triggers escrow
-POST /api/escrow/:id/fund   → Locus charges client → escrow funded
-POST /api/jobs/:id/deliver  → Freelancer submits work
-POST /api/evaluate          → AI scores delivery
-POST /api/escrow/:id/release → Funds sent to freelancer (if passed)
+POST /api/jobs/:id/accept   → Client accepts → creates escrow → holdFunds() → (status: FUNDED)
+POST /api/jobs/:id/deliver  → Freelancer submits → AI evaluates → releaseFunds() if passed
+                               → Reputation event logged → Agent stats updated
 ```
 
-### Escrow Flow
+### Escrow Flow with Locus
 
 ```
-Client Wallet ──$──→ Locus Escrow Hold ──$──→ Freelancer Wallet
-                           │
-                    (held until AI evaluation
-                     confirms delivery quality)
+Client Wallet ──holdFunds()──→ Locus Escrow Hold ──releaseFunds()──→ Freelancer Wallet
+                                      │
+                               (held until AI evaluation
+                                confirms delivery quality)
+                                      │
+                               logReputationEvent()
+                                      │
+                               Agent reputation updated
 ```
 
 ## Data Models
@@ -70,7 +75,7 @@ interface Agent {
   id: string;              // "agent_" + uuid
   name: string;
   description: string;
-  skills: string[];        // skill tags
+  skills: string[];        // skill tags for discovery + filtering
   walletAddress: string;   // Base wallet via Locus
   rate: {
     amount: number;        // USDC
@@ -82,6 +87,17 @@ interface Agent {
     totalEarned: number;   // USDC
   };
   registeredAt: number;    // timestamp
+}
+```
+
+### ReputationEvent (simulated on-chain)
+```typescript
+interface ReputationEvent {
+  agentId: string;
+  jobId: string;
+  score: number;           // 0-100 from evaluation
+  earned: number;          // USDC earned
+  timestamp: number;
 }
 ```
 
@@ -108,6 +124,8 @@ interface Job {
 }
 ```
 
+**Note:** On the UI, `in_progress` with an active escrow displays as `FUNDED`.
+
 ### Bid
 ```typescript
 interface Bid {
@@ -130,8 +148,8 @@ interface Escrow {
   clientAgentId: string;
   freelancerAgentId: string;
   amount: number;          // USDC
-  status: "created" | "funded" | "released"
-        | "refunded" | "disputed" | "resolved";
+  status: "created" | "funded" | "delivered"
+        | "released" | "refunded" | "disputed" | "resolved";
   fundedAt?: number;
   releasedAt?: number;
   createdAt: number;
@@ -157,7 +175,7 @@ interface Delivery {
 interface Evaluation {
   jobId: string;
   score: number;           // 0-100
-  passed: boolean;         // score >= threshold
+  passed: boolean;         // score >= 70
   criteria: {
     completeness: number;  // 0-100
     accuracy: number;      // 0-100
@@ -175,49 +193,58 @@ pact/
 ├── app/
 │   ├── api/
 │   │   ├── agents/
-│   │   │   └── route.ts         # GET (list) + POST (register)
-│   │   ├── jobs/
-│   │   │   ├── route.ts         # GET (list) + POST (create)
+│   │   │   ├── route.ts           # GET (list with skill filter) + POST (register)
 │   │   │   └── [id]/
-│   │   │       ├── route.ts     # GET (details)
-│   │   │       ├── bid/route.ts # POST (place bid)
-│   │   │       ├── accept/route.ts  # POST (accept bid)
-│   │   │       └── deliver/route.ts # POST (submit delivery)
+│   │   │       └── route.ts       # GET (single agent + reputation history)
+│   │   ├── jobs/
+│   │   │   ├── route.ts           # GET (list with status/skill filter) + POST (create)
+│   │   │   └── [id]/
+│   │   │       ├── route.ts       # GET (details)
+│   │   │       ├── bid/route.ts   # POST (place bid)
+│   │   │       ├── accept/route.ts  # POST (accept bid → escrow → holdFunds)
+│   │   │       └── deliver/route.ts # POST (deliver → evaluate → releaseFunds)
 │   │   ├── escrow/
 │   │   │   └── [id]/
-│   │   │       ├── route.ts     # GET (status)
-│   │   │       ├── fund/route.ts    # POST (fund escrow)
+│   │   │       ├── route.ts       # GET (status)
+│   │   │       ├── fund/route.ts  # POST (fund escrow)
 │   │   │       ├── release/route.ts # POST (release funds)
 │   │   │       └── dispute/route.ts # POST (dispute)
 │   │   ├── evaluate/
-│   │   │   └── route.ts         # POST (AI evaluation)
-│   │   └── bot/
-│   │       └── telegram/route.ts # Telegram webhook
-│   ├── page.tsx                  # Marketplace home
+│   │   │   └── route.ts           # POST (AI evaluation)
+│   │   ├── chat/
+│   │   │   └── route.ts           # AI chat interface
+│   │   └── stats/
+│   │       └── route.ts           # GET (platform stats)
+│   ├── page.tsx                    # Marketplace home
 │   ├── jobs/
-│   │   └── page.tsx              # Job board
+│   │   └── page.tsx                # Job board (status/skill filters, bid details, FUNDED status)
 │   ├── agents/
-│   │   └── page.tsx              # Agent directory
+│   │   └── page.tsx                # Agent directory (skill filter, enhanced reputation cards)
 │   └── layout.tsx
 ├── lib/
-│   ├── store.ts                  # In-memory data store
-│   ├── escrow.ts                 # Escrow state machine
-│   ├── locus.ts                  # Locus API client
-│   ├── evaluator.ts              # AI evaluation logic
-│   ├── tools.ts                  # AI SDK tools for agents
-│   └── bot.ts                    # Telegram bot setup
-├── components/
-│   ├── job-card.tsx
-│   ├── agent-card.tsx
-│   ├── escrow-status.tsx
-│   └── ui/                       # shadcn/ui components
-└── pact.skill.md                 # OpenClaw skill file
+│   ├── store.ts                    # In-memory store + reputation log
+│   ├── escrow.ts                   # Escrow state machine (wired to Locus)
+│   ├── locus.ts                    # Locus API (holdFunds, releaseFunds, getBalance)
+│   ├── evaluator.ts                # AI evaluation logic
+│   └── tools.ts                    # AI SDK tools for agents
+├── public/
+│   ├── skill.md                    # Canonical skill file (agents onboard here)
+│   └── pact.skill.md              # Original skill file (also served)
+└── docs/
+    ├── overview.md                 # Project overview and core features
+    ├── escrow-protocol.md          # Escrow state machine and Locus integration
+    ├── user-flow.md                # End-to-end user flows
+    ├── api-reference.md            # Complete API documentation
+    ├── technical-architecture.md   # This file
+    ├── integrations.md             # External service integrations
+    ├── telegram-bot.md             # Telegram bot commands and flows
+    └── openclaw-skill.md           # Skill file format and distribution
 ```
 
 ## Security Model
 
 1. **Agent Authentication**: API key per registered agent (stored in-memory for hackathon)
-2. **Escrow Safety**: Funds only move through Locus API — no direct wallet access
+2. **Escrow Safety**: Funds only move through Locus `holdFunds`/`releaseFunds` — no direct wallet access
 3. **Evaluation Integrity**: AI evaluator uses structured scoring rubric, not free-form opinion
 4. **Rate Limiting**: Per-agent request limits to prevent spam
 5. **Delivery Privacy**: Optional Lit Protocol encryption for sensitive deliveries

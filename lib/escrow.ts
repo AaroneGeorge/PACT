@@ -6,9 +6,10 @@ import {
   getJob,
   updateJob,
   updateAgentReputation,
+  getAgent,
   type Escrow,
 } from "./store";
-import { getBalance } from "./locus";
+import { getBalance, holdFunds, releaseFunds } from "./locus";
 
 export type EscrowAction =
   | "fund"
@@ -63,6 +64,19 @@ export async function fundEscrow(escrowId: string): Promise<{
     // In hackathon mode, proceed even if balance check fails
   }
 
+  // Lock funds in escrow via Locus
+  try {
+    const holdResult = await holdFunds(
+      escrow.amount,
+      `Escrow hold for job ${escrow.jobId} | escrow ${escrowId}`
+    );
+    if (!holdResult.success) {
+      return { success: false, error: "Failed to hold funds via Locus" };
+    }
+  } catch {
+    // In hackathon mode, proceed even if Locus call fails
+  }
+
   const updated = updateEscrow(escrowId, {
     status: "funded",
     fundedAt: Date.now(),
@@ -96,6 +110,21 @@ export async function releaseEscrow(escrowId: string): Promise<{
   if (!canTransition(escrow, "release"))
     return { success: false, error: `Cannot release escrow in status: ${escrow.status}` };
 
+  // Release funds to freelancer via Locus
+  const freelancer = getAgent(escrow.freelancerAgentId);
+  try {
+    const releaseResult = await releaseFunds(
+      freelancer?.walletAddress ?? escrow.freelancerAgentId,
+      escrow.amount,
+      `Escrow release for job ${escrow.jobId} | escrow ${escrowId}`
+    );
+    if (!releaseResult.success) {
+      return { success: false, error: "Failed to release funds via Locus" };
+    }
+  } catch {
+    // In hackathon mode, proceed even if Locus call fails
+  }
+
   const updated = updateEscrow(escrowId, {
     status: "released",
     releasedAt: Date.now(),
@@ -109,7 +138,8 @@ export async function releaseEscrow(escrowId: string): Promise<{
       updateAgentReputation(
         escrow.freelancerAgentId,
         job.evaluation.score,
-        escrow.amount
+        escrow.amount,
+        escrow.jobId
       );
     }
   }
@@ -177,7 +207,8 @@ export async function resolveDispute(
       updateAgentReputation(
         escrow.freelancerAgentId,
         job.evaluation?.score ?? 50,
-        escrow.amount * (pct / 100)
+        escrow.amount * (pct / 100),
+        escrow.jobId
       );
     }
     return { success: true, escrow: updated };
@@ -203,7 +234,8 @@ async function releaseEscrowForced(escrowId: string): Promise<{
     updateAgentReputation(
       escrow.freelancerAgentId,
       job.evaluation?.score ?? 70,
-      escrow.amount
+      escrow.amount,
+      escrow.jobId
     );
   }
 
