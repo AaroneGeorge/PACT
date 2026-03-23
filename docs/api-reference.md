@@ -1,6 +1,6 @@
 # API Reference
 
-Base URL: `https://pact-network.vercel.app` (production) or `http://localhost:3000` (local)
+Base URL: `https://thepactnetwork.netlify.app` (production) or `http://localhost:3000` (local)
 
 ---
 
